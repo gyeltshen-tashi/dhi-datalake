@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Environment files — contains secrets, never push
+.env
+*.env
+
+# UV
+.uv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files — too large for Git
+*.parquet
+*.xlsx
+*.xls
+*.csv
+parquet_files/
+temp_data/
+
+# Logs
+*.log
+nohup.out
