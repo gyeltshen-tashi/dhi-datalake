@@ -1,53 +1,71 @@
+# main.py
 import os 
+import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
+from contextlib import asynccontextmanager
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent/".env", override=True)
 
 from graph import (
+    get_tools,
     create_datalake_agent,
     DRUKAIR_PROMPT,
     BHUTAN_TELECOM_PROMPT,
-    MASTER_PROMPT
+    MASTER_PROMPT,
 )
-
-from tools.drukair import drukair_tools
-from tools.bhutan_telecom import bt_tools
 
 
 # ============================================================
-# CREATING THE AGENTS
-# Each agent has different tools and a different system prompt
+# AGENTS
+# Created at startup using MCP tools
 # ============================================================
 
-drukair_agent = create_datalake_agent(
-    tools=drukair_tools,
-    system_prompt=DRUKAIR_PROMPT
-)
+agents = {}
 
-bt_agent = create_datalake_agent(
-    tools=bt_tools,
-    system_prompt=BHUTAN_TELECOM_PROMPT
-)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Runs when the FastAPI app starts up.
+    Creates all agents by fetching tools from MCP server.
 
-master_agent = create_datalake_agent(
-    tools=drukair_tools + bt_tools,
-    system_prompt=MASTER_PROMPT
-)
+    Why lifespan?
+    Because get_tools() is async — we need an async context
+    to run it. Lifespan runs before the first request.
+    """
+    print("Starting up — connecting to MCP server...")
+
+    # Fetch tools per company from MCP server
+    drukair_tools = await get_tools("drukair")
+    bt_tools = await get_tools("bhutan_telecom")
+    all_tools = await get_tools("all")
+
+    print(f"Drukair tools: {len(drukair_tools)}")
+    print(f"BT tools: {len(bt_tools)}")
+    print(f"All tools: {len(all_tools)}")
+
+    # create agent with filtered tools
+    agents["drukair"] = await create_datalake_agent(drukair_tools, DRUKAIR_PROMPT)
+    agents["bhutan_telecom"] = await create_datalake_agent(bt_tools, BHUTAN_TELECOM_PROMPT)
+    agents["master"] = await create_datalake_agent(all_tools, MASTER_PROMPT)
+
+    print("All agents ready.")
+    yield
+    print("Shutting down.")
 
 
 # ============================================================
 # FASTAPI APP
 # ============================================================
 
-app = FastAPI(title="DHI Data Lake Chat Agent")
+app = FastAPI(title="DHI Data Lake Chat Agent", lifespan=lifespan)
 
 # CORS middleware — allows the frontend (running on a different
-# origin/port) to call this API
+# origin/port) to call this.
 # Without this, browsers block cross-origin requests
 app.add_middleware(
     CORSMiddleware,
@@ -80,7 +98,7 @@ class ChatResponse(BaseModel):
 # Runs any agent with a message and returns the response
 # ============================================================
 
-def run_agent(agent, message: str, session_id: str) -> str:
+async def run_agent(agent, message: str, session_id: str) -> str:
     """
     Sends a message to an agent and returns its response.
 
@@ -90,7 +108,7 @@ def run_agent(agent, message: str, session_id: str) -> str:
     config = {"configurable": {"thread_id": session_id}}
 
     try: 
-        result = agent.invoke(
+        result = await agent.ainvoke(
             {"messages": [HumanMessage(content=message)]},
             config=config,
         )
@@ -111,41 +129,36 @@ def home():
     return {"message": "DHI Chat Agent is running"}
 
 
-@app.post("/chat/drukair", response_model=ChatResponse)
-def chat_drukair(request: ChatRequest):
-    """
-    Chat endpoint for Drukair dashboard.
-    Only has access to Drukair data.
-
-    frondend sends:
-    POST /chat/drukair
-    {
-        "message": "what was the revenue in 2024?",
-        "session_id": "user123-drukair"
+@app.get("/health")
+def health():
+    """Health check endpoint — used to verify the agent is running"""
+    return {
+        "status": "healthy",
+        "agents": list(agents.keys()),
+        "api_base": os.getenv("API_BASE_URL", "http://localhost:8000")
     }
-    """
-    response = run_agent(drukair_agent, request.message, request.session_id)
+
+
+@app.post("/chat/drukair", response_model=ChatResponse)
+async def chat_drukair(request: ChatRequest):
+    response = await run_agent(agents["drukair"], request.message, request.session_id)
     return ChatResponse(response=response, session_id=request.session_id)
 
 
 @app.post("/chat/bhutan_telecom", response_model=ChatResponse)
-def chat_bt(request: ChatRequest):
-    """
-    Chat endpoint for Bhutan Telecom dashboard.
-    Only has access to BT data.
-    """
-    response = run_agent(bt_agent, request.message, request.session_id)
+async def chat_bt(request: ChatRequest):
+    response = await run_agent(agents["bhutan_telecom"], request.message, request.session_id)
     return ChatResponse(response=response, session_id=request.session_id)
 
 
 @app.post("/chat/master", response_model=ChatResponse)
-def chat_master(request: ChatRequest):
+async def chat_master(request: ChatRequest):
     """
     Chat endpoint for master dashboard.
     Has access to ALL company data.
     Can perform cross-company analysis.
     """
-    response = run_agent(master_agent, request.message, request.session_id)
+    response = await run_agent(agents["master"], request.message, request.session_id)
     return ChatResponse(response=response, session_id=request.session_id)
 
 
@@ -162,14 +175,4 @@ def clear_session(session_id: str):
     Note: With MemorySaver, we can't truly delete a session.
     The simplest approach is to use a new session_id for new conversations.
     """
-    return {"message": f"Start a new conversation by using a different session_id"}
-
-
-@app.get("/health")
-def health():
-    """Health check endpoint — used to verify the agent is running"""
-    return {
-        "status": "healthy",
-        "agents": ["drukair", "bhutan_telecom", "master"],
-        "api_base": os.getenv("API_BASE_URL", "http://localhost:8000")
-    }
+    return {"message": f"Use a new session_id to start a fresh conversation"}

@@ -1,31 +1,70 @@
+# graph.py
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent/".env", override=True)
 
+# Path to the MCP server's main.py
+# This tells the MCP client where to find the server
+MCP_SERVER_PATH = str(
+    Path(__file__).resolve().parent.parent / "mcp_server" / "main.py"
+)
 
-def create_datalake_agent(tools: list, system_prompt: str):
+# This tells the MCP client which Python to use to run the server
+# It uses the same uv virtual environment
+PYTHON_PATH = str(
+    Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python"
+)
+
+
+async def get_tools(company: str = "all"):
     """
-    Creates a Langchain agent:
+    Connects to MCP server and fetches tools.
+    """
+    # Note: MultiServerMCPClient uses a dictionary mapping server name to config
+    client = MultiServerMCPClient(
+        {
+            "dhi_datalake": {
+                "command": PYTHON_PATH,
+                "args": [MCP_SERVER_PATH],
+                "transport": "stdio",
+            }
+        }
+    ) 
 
-    what this does:
-    1. Creates a Claude LLM instance 
-    2. Gives it the tools it can use
-    3. Adds memory so it remembers conversation history
-    4. Wraps everything in a ReAct loop
+    # Get all tools from the connected client
+    all_tools = await client.get_tools()
 
-    Args: 
-        tools: List of @tool functions the agent can call
-        system_prompt: Instructions that define the agent's behavior and role
+    if company == "all":
+        return all_tools
+    
+    premix_map = {
+        "drukair": "get_drukair_",
+        "bhutan_telecom": "get_bt_"
+    }
+
+    prefix = premix_map.get(company)
+    if not prefix:
+        return all_tools
+    
+    # Filter tools by company prefix 
+    filtered = [t for t in all_tools if t.name.startswith(prefix)]
+    return filtered
+    
+
+async def create_datalake_agent(tools: list, system_prompt: str):
+    """
+    Creates a LangGraph agent with the given tools and prompt.
     """
     llm = ChatAnthropic(
         model = "claude-sonnet-4-6",
         api_key=os.getenv("ANTHROPIC_API_KEY"),
-        temperature=0.3
+        temperature=0
     )
 
     memory = MemorySaver()
@@ -38,7 +77,7 @@ def create_datalake_agent(tools: list, system_prompt: str):
     )
 
     return agent
-
+    
 
 # ============================================================
 # SYSTEM PROMPTS
