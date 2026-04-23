@@ -3,10 +3,10 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_core.messages import trim_messages, SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent/".env", override=True)
 
@@ -67,25 +67,41 @@ async def create_datalake_agent(tools: list, system_prompt: str):
 
     memory = MemorySaver()
 
-    trimmer = trim_messages(
-        max_tokens=50000,
-        strategy="last",
-        token_counter=llm,
-        include_system=False,
-        allow_partial=False,
-        start_on="human",
-    )
-
     sys_msg = SystemMessage(content=system_prompt)
 
-    def prompt_fn(state):
-        return [sys_msg] + trimmer.invoke(state["messages"])
+    def pre_model_hook(state):
+        messages = state["messages"]
 
-    agent = create_agent(
+        # Group messages into complete turns.
+        # A turn = one HumanMessage + all AI/Tool messages that follow it.
+        # This guarantees we never split a tool_use / tool_result pair.
+        turns = []
+        current_turn = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage) and current_turn:
+                turns.append(current_turn)
+                current_turn = [msg]
+            else:
+                current_turn.append(msg)
+        if current_turn:
+            turns.append(current_turn)
+
+        # Drop oldest turns until the history fits within the token budget.
+        # Always keep at least the most recent turn.
+        def count_tokens(msgs):
+            return sum(len(str(m.content)) for m in msgs) // 4
+
+        while len(turns) > 1 and count_tokens([m for t in turns for m in t]) > 30000:
+            turns.pop(0)
+
+        trimmed = [m for t in turns for m in t]
+        return {"llm_input_messages": [sys_msg] + trimmed}
+
+    agent = create_react_agent(
         model=llm,
         tools=tools,
         checkpointer=memory,
-        prompt=prompt_fn,
+        pre_model_hook=pre_model_hook,
     )
 
     return agent

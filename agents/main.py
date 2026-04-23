@@ -98,12 +98,21 @@ async def stream_agent(agent, message: str, session_id: str):
     async for chunk in agent.astream(
         {"messages": [HumanMessage(content=message)]},
         config=config,
-        stream_mode="message",
+        stream_mode="messages",
     ):
         # chunk is (message chunk, metadata)
         msg, metadata = chunk
         if isinstance(msg, AIMessageChunk) and msg.content:
-            text = msg.content if isinstance(msg.content, str) else ""
+            if isinstance(msg.content, str):
+                text = msg.content
+            elif isinstance(msg.content, list):
+                text = "".join(
+                    block.get("text", "")
+                    for block in msg.content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            else:
+                text = ""
             if text:
                 yield f"data: {json.dumps({'text': text})}\n\n"
 
