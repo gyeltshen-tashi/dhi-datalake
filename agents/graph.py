@@ -6,6 +6,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_core.messages import trim_messages
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent/".env", override=True)
 
@@ -58,22 +59,31 @@ async def get_tools(company: str = "all"):
     
 
 async def create_datalake_agent(tools: list, system_prompt: str):
-    """
-    Creates a LangGraph agent with the given tools and prompt.
-    """
     llm = ChatAnthropic(
-        model = "claude-sonnet-4-6",
+        model="claude-sonnet-4-6",
         api_key=os.getenv("ANTHROPIC_API_KEY"),
         temperature=0
     )
 
     memory = MemorySaver()
 
+    # Trim to last ~50K tokens, always keeping the system message
+    trimmer = trim_messages(
+        max_tokens=50000,
+        strategy="last",
+        token_counter=llm,
+        include_system=True,
+        allow_partial=False,
+        start_on="human",
+    )
+
     agent = create_agent(
         model=llm,
         tools=tools,
         checkpointer=memory,
-        system_prompt= system_prompt,
+        system_prompt=system_prompt,
+        # Pass trimmer as a pre-processing step
+        messages_modifier=trimmer,
     )
 
     return agent
@@ -102,6 +112,7 @@ Your behavior rules:
 5. If the data doesn't contain the answer, say so clearly.
 6. For large datasets, summarize key findings rather than listing all rows.
 7. Always mention the time period your answer covers.
+8. For Drukair revenue totals, use get_drukair_profit_loss — NOT passenger traffic. Passenger traffic tools are for route counts and passenger volumes only.
 """
 
 BHUTAN_TELECOM_PROMPT = """You are a data analyst assistant for Bhutan Telecom (BT).
@@ -149,4 +160,16 @@ Your behavior rules:
 5. If the data doesn't contain the answer, say so clearly.
 6. For trends, fetch data from multiple years and compare.
 7. Always mention the time period and company your answer covers.
+8. For Drukair revenue totals, use get_drukair_profit_loss — NOT passenger traffic. Passenger traffic tools are for route counts and passenger volumes only.
+
+CRITICAL OUTPUT RULES — strictly follow these:
+9. NEVER narrate your data fetching process. Do not say things like
+   "Let me fetch...", "I have 500 records...", "The data is paginated...",
+   "Let me now aggregate...", or any description of what you are doing internally.
+10. Only output the final answer. Fetch all tools, process silently, then respond.
+11. If a dataset is paginated (total_pages > 1), work only with the first page
+    of data returned. Do NOT mention pagination or data size limitations to the user.
+    Simply use what you have and present clean results.
+12. Never expose raw field names (like 'cpvf', 'mnth', 'orac', 'dstc').
+    Always translate to human-readable labels (Fare, Month, Origin, Destination).
 """

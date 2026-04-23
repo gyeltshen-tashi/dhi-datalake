@@ -1,5 +1,4 @@
 services:
-
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -19,6 +18,7 @@ services:
   postgres:
     image: postgres:15
     container_name: postgres
+    restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -33,12 +33,13 @@ services:
   nessie:
     image: projectnessie/nessie:latest
     container_name: nessie
+    restart: always
     ports:
       - "19120:19120"
     environment:
       - QUARKUS_HTTP_PORT=19120
       - nessie.version.store.type=JDBC
-      - quarkus.datasource.jdbc.url=jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      - quarkus.datasource.jdbc.url=jdbc:postgresql://postgres:5432/nessie
       - quarkus.datasource.username=${POSTGRES_USER}
       - quarkus.datasource.password=${POSTGRES_PASSWORD}
     depends_on:
@@ -49,26 +50,15 @@ services:
   trino:
     image: trinodb/trino:latest
     container_name: trino
+    restart: always
     ports:
       - "8080:8080"
     volumes:
-      - ./trino/etc:/etc/trino
-      - trino-data:/data/trino
+      - ${DATALAKE_ROOT}/trino/etc:/etc/trino
+      - ${DATALAKE_ROOT}/trino/data:/data/trino
     depends_on:
       - minio
       - nessie
-    networks:
-      - datalake-net
-
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: pgadmin
-    restart: always
-    ports:
-      - "5050:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - datalake-net
 
@@ -80,6 +70,4 @@ volumes:
   minio-data:
     driver: local
   postgres-data:
-    driver: local
-  trino-data:
     driver: local

@@ -1,12 +1,13 @@
 # main.py
-import os 
-import asyncio
+import os
+import json
 from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessageChunk
 from contextlib import asynccontextmanager
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent/".env", override=True)
@@ -85,40 +86,30 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str        # the user's question
     session_id: str     # identifies the conversation
-                        # same session_id = agent remembers previous messages
-                        # different session_id = fresh conversation
-
-class ChatResponse(BaseModel):
-    response: str       # the agent's answer
-    session_id: str     # echoed back so frontend knows which session this is
 
 
 # ============================================================
-# HELPER FUNCTION
-# Runs any agent with a message and returns the response
+# STREAM AGENT
+# Stream the AI responses
 # ============================================================
-
-async def run_agent(agent, message: str, session_id: str) -> str:
-    """
-    Sends a message to an agent and returns its response.
-
-    config with thread_id is how LangGraph identifies which conversation to load from memory. 
-    same thread_id = same conversation.
-    """
+async def stream_agent(agent, message: str, session_id: str):
     config = {"configurable": {"thread_id": session_id}}
 
-    try: 
-        result = await agent.ainvoke(
-            {"messages": [HumanMessage(content=message)]},
-            config=config,
-        )
-        # result["messages"] is a list of all messages in the conversation
-        # [-1] gets the last one — which is the agent's response
-        return result["messages"][-1].content
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
+    async for chunk in agent.astream(
+        {"messages": [HumanMessage(content=message)]},
+        config=config,
+        stream_mode="message",
+    ):
+        # chunk is (message chunk, metadata)
+        msg, metadata = chunk
+        if isinstance(msg, AIMessageChunk) and msg.content:
+            text = msg.content if isinstance(msg.content, str) else ""
+            if text:
+                yield f"data: {json.dumps({'text': text})}\n\n"
+
+    # Send a done event so frontend knows it's finished
+    yield f"data: {json.dumps({'done': True, 'session_id': session_id})}\n\n"
+
 
 # ============================================================
 # ENDPOINTS
@@ -139,27 +130,45 @@ def health():
     }
 
 
-@app.post("/chat/drukair", response_model=ChatResponse)
+@app.post("/chat/drukair")
 async def chat_drukair(request: ChatRequest):
-    response = await run_agent(agents["drukair"], request.message, request.session_id)
-    return ChatResponse(response=response, session_id=request.session_id)
+    return StreamingResponse(
+        stream_agent(agents["drukair"], request.message, request.session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
-@app.post("/chat/bhutan_telecom", response_model=ChatResponse)
+@app.post("/chat/bhutan_telecom")
 async def chat_bt(request: ChatRequest):
-    response = await run_agent(agents["bhutan_telecom"], request.message, request.session_id)
-    return ChatResponse(response=response, session_id=request.session_id)
+    return StreamingResponse(
+        stream_agent(agents["bhutan_telecom"], request.message, request.session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
-@app.post("/chat/master", response_model=ChatResponse)
+@app.post("/chat/master")
 async def chat_master(request: ChatRequest):
     """
     Chat endpoint for master dashboard.
     Has access to ALL company data.
     Can perform cross-company analysis.
     """
-    response = await run_agent(agents["master"], request.message, request.session_id)
-    return ChatResponse(response=response, session_id=request.session_id)
+    return StreamingResponse(
+        stream_agent(agents["master"], request.message, request.session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no", # Disable nginx buffering
+        }
+    )
 
 
 # ============================================================
