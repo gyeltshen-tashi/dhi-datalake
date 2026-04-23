@@ -413,3 +413,48 @@ sudo lsof -i :8000
 sudo lsof -i :8001
 ps aux | grep -E "uvicorn|python" | grep -v grep
 ```
+
+## 11. Makefile Commands (Preferred)
+
+The Makefile wraps common operations into short commands. Use these instead of running
+systemctl and git commands manually.
+
+| Command | What it does |
+|---|---|
+| `make deploy` | Pull latest code + sync packages + restart all services |
+| `make update` | Pull latest code + sync packages only (no restart) |
+| `make restart` | Restart all services (infra + API + agents) |
+| `make restart-infra` | Restart Docker infrastructure only |
+| `make restart-api` | Restart API service only |
+| `make restart-agents` | Restart agents service only |
+| `make logs-infra` | Follow Docker infrastructure logs |
+| `make logs-api` | Follow API logs |
+| `make logs-agents` | Follow agents logs |
+| `make status` | Show status of all services and Docker containers |
+
+### Most common workflows
+
+**Deploy an update:**
+```bash
+make deploy
+```
+
+**Only agents or MCP code changed:**
+```bash
+make restart-agents
+```
+
+**Only API code changed:**
+```bash
+make restart-api
+```
+
+**Check everything is healthy:**
+```bash
+make status
+```
+
+**Watch agent logs in real time:**
+```bash
+make logs-agents
+```
