@@ -18,7 +18,7 @@ deploy: update restart
 
 update:
 	git -C /home/lake/dhi-datalake pull
-	cd /home/lake/dhi-datalake && uv sync
+	cd /home/lake/dhi-datalake && uv sync --all-packages
 	cp /home/lake/dhi-datalake/infrastructure/docker-compose.yml /home/lake/datalake/docker-compose.yml
 
 restart: restart-infra restart-api restart-agents
