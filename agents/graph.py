@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_core.messages import trim_messages
@@ -77,13 +77,12 @@ async def create_datalake_agent(tools: list, system_prompt: str):
         start_on="human",
     )
 
-    agent = create_agent(
+    agent = create_react_agent(
         model=llm,
         tools=tools,
         checkpointer=memory,
-        system_prompt=system_prompt,
-        # Pass trimmer as a pre-processing step
-        messages_modifier=trimmer,
+        prompt=system_prompt,
+        state_modifier=trimmer,
     )
 
     return agent
