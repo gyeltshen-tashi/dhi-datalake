@@ -236,7 +236,4 @@ CONFIGS = {
         'table': 'master_data_2025',
         'location': 's3://data-lake-bucket/drukair/master_data/2025/',
     },
-}r_data_2025',
-        'location': 's3://data-lake-bucket/drukair/master_data/2025/',
-    },
 }
