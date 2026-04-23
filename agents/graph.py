@@ -3,10 +3,10 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_core.messages import trim_messages
+from langchain_core.messages import trim_messages, SystemMessage
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent/".env", override=True)
 
@@ -67,22 +67,25 @@ async def create_datalake_agent(tools: list, system_prompt: str):
 
     memory = MemorySaver()
 
-    # Trim to last ~50K tokens, always keeping the system message
     trimmer = trim_messages(
         max_tokens=50000,
         strategy="last",
         token_counter=llm,
-        include_system=True,
+        include_system=False,
         allow_partial=False,
         start_on="human",
     )
 
-    agent = create_react_agent(
+    sys_msg = SystemMessage(content=system_prompt)
+
+    def prompt_fn(state):
+        return [sys_msg] + trimmer.invoke(state["messages"])
+
+    agent = create_agent(
         model=llm,
         tools=tools,
         checkpointer=memory,
-        prompt=system_prompt,
-        state_modifier=trimmer,
+        prompt=prompt_fn,
     )
 
     return agent
