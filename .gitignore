@@ -28,6 +28,9 @@ temp_data/
 *.log
 nohup.out
 
+# UI prototypes
+ui.html
+
 # Infrastructure secrets
 infrastructure/.env
 infrastructure/trino/etc/catalog/iceberg.properties
