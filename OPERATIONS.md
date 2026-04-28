@@ -458,3 +458,13 @@ make status
 ```bash
 make logs-agents
 ```
+
+## 12. Known Issues & Fixes
+
+### Trino fails with Nessie API error
+**Symptom:** `TrinoQueryError: Failed to execute GET request against 'http://nessie:19120/api/v1/trees/tree/main'`
+**Cause:** Newer versions of Nessie dropped the v1 API.
+**Fix:** Update `~/datalake/trino/etc/catalog/iceberg.properties`:
+  - Change `iceberg.nessie-catalog.uri=http://nessie:19120/api/v1`
+  - To `iceberg.nessie-catalog.uri=http://nessie:19120/api/v2`
+  - Then run `make restart-infra`
